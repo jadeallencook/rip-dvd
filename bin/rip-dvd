@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
+
+print_help() {
+  cat <<'EOF'
+rip-dvd - rip the inserted DVD to an mp4 with HandBrakeCLI
+
+Usage: rip-dvd [options]
+
+Options:
+  --output=NAME   Base name for the output file (default: current timestamp).
+  --lang=CODE     Audio language to select, e.g. eng, fre (default: eng).
+  --title=N       Rip a specific title number instead of the main feature.
+  --split         Rip every title on the disc to separate files instead of just the main feature.
+  --update        Download and install the latest version from GitHub (main branch).
+  --help, -h      Show this help message.
+EOF
+}
+
+update_self() {
+  local self_path tmp
+  self_path=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+  echo "rip-dvd: updating to latest version from GitHub..."
+  tmp=$(mktemp)
+  if ! curl -fsSL "$RAW_URL" -o "$tmp"; then
+    echo "rip-dvd: failed to download update" >&2
+    rm -f "$tmp"
+    exit 1
+  fi
+  chmod +x "$tmp"
+  mv "$tmp" "$self_path"
+  echo "rip-dvd: updated successfully"
+}
+
+check_dependencies() {
+  if ! command -v HandBrakeCLI >/dev/null 2>&1; then
+    echo "rip-dvd: HandBrakeCLI not found." >&2
+    if command -v brew >/dev/null 2>&1; then
+      echo "rip-dvd: installing HandBrakeCLI via Homebrew..." >&2
+      brew install handbrake
+    else
+      echo "rip-dvd: install Homebrew (https://brew.sh) then run: brew install handbrake" >&2
+      exit 1
+    fi
+  fi
+}
+
+output_name=""
+lang="eng"
+title=""
+split=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      print_help
+      exit 0
+      ;;
+    --update)
+      update_self
+      exit 0
+      ;;
+    --output=*) output_name="${arg#--output=}" ;;
+    --lang=*) lang="${arg#--lang=}" ;;
+    --title=*) title="${arg#--title=}" ;;
+    --split) split=true ;;
+    *)
+      echo "rip-dvd: unknown argument: $arg" >&2
+      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--update] [--help]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+check_dependencies
+
+if [[ -z "$output_name" ]]; then
+  output_name=$(date +%Y-%m-%d_%H%M%S)
+fi
+
+safe_name="${output_name//\//-}"
+mkdir -p ~/Downloads
+
+disk=$(drutil status 2>/dev/null | awk -F'Name: ' '/Name:/{print $2; exit}')
+if [[ -z "$disk" ]]; then
+  echo "rip-dvd: no optical drive found" >&2
+  exit 1
+fi
+if ! drutil status 2>/dev/null | grep -q "Type: DVD"; then
+  echo "rip-dvd: no disc loaded in $disk (is it inserted?)" >&2
+  exit 1
+fi
+
+if $split; then
+  title_count=$(HandBrakeCLI -i "$disk" --scan -t 0 2>&1 | grep -oE "scan: DVD has [0-9]+ title" | grep -oE "[0-9]+")
+  if [[ -z "$title_count" ]]; then
+    echo "rip-dvd: could not determine title count for --split" >&2
+    exit 1
+  fi
+  echo "rip-dvd: splitting into $title_count title(s)"
+  for ((i = 1; i <= title_count; i++)); do
+    split_output="$HOME/Downloads/${safe_name} (Title ${i}).mp4"
+    echo "rip-dvd: ripping title $i of $title_count -> $split_output"
+    HandBrakeCLI -i "$disk" -o "$split_output" \
+      -t "$i" \
+      --audio-lang-list "$lang" \
+      --first-audio \
+      --preset "Fast 480p30" \
+      --format av_mp4 \
+      --encoder x264
+  done
+  exit 0
+fi
+
+output=~/Downloads/${safe_name}.mp4
+if [[ -n "$title" ]]; then
+  title_flag=(-t "$title")
+else
+  title_flag=(--main-feature)
+fi
+
+HandBrakeCLI -i "$disk" -o "$output" \
+  "${title_flag[@]}" \
+  --audio-lang-list "$lang" \
+  --first-audio \
+  --preset "Fast 480p30" \
+  --format av_mp4 \
+  --encoder x264
