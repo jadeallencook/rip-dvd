@@ -32,10 +32,27 @@ rip-dvd [options]
 | `--lang=CODE` | Audio language to select, e.g. `eng`, `fre` (default: `eng`). |
 | `--title=N` | Rip a specific title number instead of the main feature. |
 | `--split` | Rip every title on the disc to separate files instead of just the main feature. |
+| `--season=N` | Season number. Requires `--episode` and `--split`; changes output naming to `OUTPUT \| Season N \| Episode M.mp4`, incrementing per title. |
+| `--episode=N` | Starting episode number for the first title. Requires `--season` and `--split`. |
 | `--update` | Download and install the latest version from GitHub (`main` branch). |
 | `--help`, `-h` | Show usage help. |
 
 Output files are written to `~/Downloads`.
+
+### Ripping a season
+
+```
+rip-dvd --output="King of the Hill" --season=3 --episode=5 --split
+```
+
+Produces, in title order:
+
+```
+King of the Hill | Season 3 | Episode 5.mp4
+King of the Hill | Season 3 | Episode 6.mp4
+King of the Hill | Season 3 | Episode 7.mp4
+King of the Hill | Season 3 | Episode 8.mp4
+```
 
 ## Update
 

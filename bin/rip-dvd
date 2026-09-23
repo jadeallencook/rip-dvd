@@ -14,6 +14,9 @@ Options:
   --lang=CODE     Audio language to select, e.g. eng, fre (default: eng).
   --title=N       Rip a specific title number instead of the main feature.
   --split         Rip every title on the disc to separate files instead of just the main feature.
+  --season=N      Season number. Requires --episode and --split; changes output naming to
+                  "OUTPUT | Season N | Episode M.mp4", incrementing per title.
+  --episode=N     Starting episode number for the first title. Requires --season and --split.
   --update        Download and install the latest version from GitHub (main branch).
   --help, -h      Show this help message.
 EOF
@@ -51,6 +54,8 @@ output_name=""
 lang="eng"
 title=""
 split=false
+season=""
+episode=""
 
 for arg in "$@"; do
   case "$arg" in
@@ -66,13 +71,26 @@ for arg in "$@"; do
     --lang=*) lang="${arg#--lang=}" ;;
     --title=*) title="${arg#--title=}" ;;
     --split) split=true ;;
+    --season=*) season="${arg#--season=}" ;;
+    --episode=*) episode="${arg#--episode=}" ;;
     *)
       echo "rip-dvd: unknown argument: $arg" >&2
-      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--update] [--help]" >&2
+      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--season=N] [--episode=N] [--update] [--help]" >&2
       exit 1
       ;;
   esac
 done
+
+if [[ -n "$season" || -n "$episode" ]]; then
+  if ! $split; then
+    echo "rip-dvd: --season and --episode require --split" >&2
+    exit 1
+  fi
+  if [[ -z "$season" || -z "$episode" ]]; then
+    echo "rip-dvd: --season and --episode must be used together" >&2
+    exit 1
+  fi
+fi
 
 check_dependencies
 
@@ -101,7 +119,12 @@ if $split; then
   fi
   echo "rip-dvd: splitting into $title_count title(s)"
   for ((i = 1; i <= title_count; i++)); do
-    split_output="$HOME/Downloads/${safe_name} (Title ${i}).mp4"
+    if [[ -n "$season" ]]; then
+      episode_num=$((episode + i - 1))
+      split_output="$HOME/Downloads/${safe_name} | Season ${season} | Episode ${episode_num}.mp4"
+    else
+      split_output="$HOME/Downloads/${safe_name} (Title ${i}).mp4"
+    fi
     echo "rip-dvd: ripping title $i of $title_count -> $split_output"
     HandBrakeCLI -i "$disk" -o "$split_output" \
       -t "$i" \
