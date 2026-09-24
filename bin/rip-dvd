@@ -112,22 +112,76 @@ if ! drutil status 2>/dev/null | grep -q "Type: DVD"; then
 fi
 
 if $split; then
-  title_count=$(HandBrakeCLI -i "$disk" --scan -t 0 2>&1 | grep -oE "scan: DVD has [0-9]+ title" | grep -oE "[0-9]+")
-  if [[ -z "$title_count" ]]; then
-    echo "rip-dvd: could not determine title count for --split" >&2
+  echo "rip-dvd: scanning disc for episode titles..." >&2
+  scan_output=$(HandBrakeCLI -i "$disk" --scan -t 0 2>&1)
+
+  title_nums=()
+  title_durs=()
+  current_title=""
+  while IFS= read -r line; do
+    if [[ $line =~ scan:\ scanning\ title\ ([0-9]+) ]]; then
+      current_title="${BASH_REMATCH[1]}"
+    elif [[ -n "$current_title" && $line =~ scan:\ duration\ is\ ([0-9]+):([0-9]+):([0-9]+) ]]; then
+      h="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; s="${BASH_REMATCH[3]}"
+      title_nums+=("$current_title")
+      title_durs+=($((10#$h * 3600 + 10#$m * 60 + 10#$s)))
+      current_title=""
+    fi
+  done <<< "$scan_output"
+
+  if [[ ${#title_nums[@]} -eq 0 ]]; then
+    echo "rip-dvd: could not determine title/chapter structure for --split" >&2
     exit 1
   fi
-  echo "rip-dvd: splitting into $title_count title(s)"
-  for ((i = 1; i <= title_count; i++)); do
+
+  # Real episodes cluster tightly around one runtime; DVDs also often carry a
+  # "Play All" title (all episodes back to back) and short menu/junk titles,
+  # which fall into different 5-minute buckets and get excluded below.
+  buckets=()
+  for d in "${title_durs[@]}"; do
+    buckets+=($((d / 300)))
+  done
+
+  best_bucket=""
+  best_count=0
+  for b in "${buckets[@]}"; do
+    count=0
+    for b2 in "${buckets[@]}"; do
+      [[ "$b2" == "$b" ]] && ((count++))
+    done
+    if ((count > best_count)); then
+      best_count=$count
+      best_bucket=$b
+    fi
+  done
+
+  episode_titles=()
+  for idx in "${!title_nums[@]}"; do
+    if [[ "${buckets[$idx]}" == "$best_bucket" ]] && ((title_durs[idx] >= 60)); then
+      episode_titles+=("${title_nums[$idx]}")
+    fi
+  done
+
+  episode_count=${#episode_titles[@]}
+  if ((episode_count == 0)); then
+    echo "rip-dvd: could not identify episode titles for --split" >&2
+    exit 1
+  fi
+
+  echo "rip-dvd: detected $episode_count episode title(s): ${episode_titles[*]} (of ${#title_nums[@]} total titles on disc)"
+
+  n=0
+  for t in "${episode_titles[@]}"; do
+    ((n++))
     if [[ -n "$season" ]]; then
-      episode_num=$((episode + i - 1))
+      episode_num=$((episode + n - 1))
       split_output="$HOME/Downloads/${safe_name} | Season ${season} | Episode ${episode_num}.mp4"
     else
-      split_output="$HOME/Downloads/${safe_name} (Title ${i}).mp4"
+      split_output="$HOME/Downloads/${safe_name} (Title ${t}).mp4"
     fi
-    echo "rip-dvd: ripping title $i of $title_count -> $split_output"
+    echo "rip-dvd: ripping title $t ($n of $episode_count) -> $split_output"
     HandBrakeCLI -i "$disk" -o "$split_output" \
-      -t "$i" \
+      -t "$t" \
       --audio-lang-list "$lang" \
       --first-audio \
       --preset "Fast 480p30" \
