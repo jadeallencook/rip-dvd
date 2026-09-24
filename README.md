@@ -35,6 +35,7 @@ rip-dvd [options]
 | `--season=N` | Season number. Requires `--episode` and `--split`; changes output naming to `OUTPUT \| Season N \| Episode M.mp4`, incrementing per title. |
 | `--episode=N` | Starting episode number for the first title. Requires `--season` and `--split`. |
 | `--update` | Download and install the latest version from GitHub (`main` branch). |
+| `--version`, `-v` | Show the installed version. |
 | `--help`, `-h` | Show usage help. |
 
 Output files are written to `~/Downloads`.
@@ -60,6 +61,8 @@ King of the Hill | Season 3 | Episode 8.mp4
 rip-dvd --update
 ```
 
+Reports the version you're on and the version it's updating to, or tells you
+if you're already up to date. Check your current version with `rip-dvd --version`.
 Or just re-run the install command above.
 
 ## Uninstall

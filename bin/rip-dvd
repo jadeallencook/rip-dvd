@@ -2,6 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
+VERSION="1.0.0"
 
 print_help() {
   cat <<'EOF'
@@ -18,23 +19,38 @@ Options:
                   "OUTPUT | Season N | Episode M.mp4", incrementing per title.
   --episode=N     Starting episode number for the first title. Requires --season and --split.
   --update        Download and install the latest version from GitHub (main branch).
+  --version, -v   Show the installed version.
   --help, -h      Show this help message.
 EOF
 }
 
 update_self() {
-  local self_path tmp
+  local self_path tmp remote_version
   self_path=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-  echo "rip-dvd: updating to latest version from GitHub..."
   tmp=$(mktemp)
   if ! curl -fsSL "$RAW_URL" -o "$tmp"; then
     echo "rip-dvd: failed to download update" >&2
     rm -f "$tmp"
     exit 1
   fi
+
+  remote_version=$(grep -m1 '^VERSION=' "$tmp" | sed -E 's/^VERSION="([^"]*)"/\1/')
+  if [[ -z "$remote_version" ]]; then
+    echo "rip-dvd: could not determine remote version" >&2
+    rm -f "$tmp"
+    exit 1
+  fi
+
+  if [[ "$remote_version" == "$VERSION" ]]; then
+    echo "rip-dvd: already up to date (v$VERSION)"
+    rm -f "$tmp"
+    exit 0
+  fi
+
+  echo "rip-dvd: updating from v$VERSION to v$remote_version..."
   chmod +x "$tmp"
   mv "$tmp" "$self_path"
-  echo "rip-dvd: updated successfully"
+  echo "rip-dvd: updated to v$remote_version"
 }
 
 check_dependencies() {
@@ -67,6 +83,10 @@ for arg in "$@"; do
       update_self
       exit 0
       ;;
+    --version|-v)
+      echo "rip-dvd v$VERSION"
+      exit 0
+      ;;
     --output=*) output_name="${arg#--output=}" ;;
     --lang=*) lang="${arg#--lang=}" ;;
     --title=*) title="${arg#--title=}" ;;
@@ -75,7 +95,7 @@ for arg in "$@"; do
     --episode=*) episode="${arg#--episode=}" ;;
     *)
       echo "rip-dvd: unknown argument: $arg" >&2
-      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--season=N] [--episode=N] [--update] [--help]" >&2
+      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--season=N] [--episode=N] [--update] [--version] [--help]" >&2
       exit 1
       ;;
   esac
