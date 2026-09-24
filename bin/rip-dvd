@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 print_help() {
   cat <<'EOF'
