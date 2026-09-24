@@ -155,11 +155,16 @@ if $split; then
   fi
 
   # Real episodes cluster tightly around one runtime; DVDs also often carry a
-  # "Play All" title (all episodes back to back) and short menu/junk titles,
-  # which fall into different 5-minute buckets and get excluded below.
+  # "Play All" title (all episodes back to back) and short menu/junk titles.
+  # Junk titles are dropped by the >=60s floor before clustering, since a disc
+  # can have more junk titles than episodes and would otherwise win the vote.
+  candidate_idx=()
   buckets=()
-  for d in "${title_durs[@]}"; do
-    buckets+=($((d / 300)))
+  for idx in "${!title_nums[@]}"; do
+    if ((title_durs[idx] >= 60)); then
+      candidate_idx+=("$idx")
+      buckets+=($((title_durs[idx] / 300)))
+    fi
   done
 
   best_bucket=""
@@ -176,9 +181,9 @@ if $split; then
   done
 
   episode_titles=()
-  for idx in "${!title_nums[@]}"; do
-    if [[ "${buckets[$idx]}" == "$best_bucket" ]] && ((title_durs[idx] >= 60)); then
-      episode_titles+=("${title_nums[$idx]}")
+  for i in "${!candidate_idx[@]}"; do
+    if [[ "${buckets[$i]}" == "$best_bucket" ]]; then
+      episode_titles+=("${title_nums[${candidate_idx[$i]}]}")
     fi
   done
 
