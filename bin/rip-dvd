@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
-VERSION="1.0.1"
+VERSION="1.0.2"
 
 print_help() {
   cat <<'EOF'
@@ -28,7 +28,9 @@ update_self() {
   local self_path tmp remote_version
   self_path=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
   tmp=$(mktemp)
-  if ! curl -fsSL "$RAW_URL" -o "$tmp"; then
+  # raw.githubusercontent.com is CDN-cached for a few minutes after a push;
+  # a cache-busting query param forces a fresh fetch from origin.
+  if ! curl -fsSL "${RAW_URL}?nocache=$(date +%s)" -o "$tmp"; then
     echo "rip-dvd: failed to download update" >&2
     rm -f "$tmp"
     exit 1
