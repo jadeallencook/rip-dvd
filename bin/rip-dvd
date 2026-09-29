@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
-VERSION="1.0.2"
+VERSION="1.0.3"
 
 print_help() {
   cat <<'EOF'
@@ -160,32 +160,37 @@ if $split; then
   # "Play All" title (all episodes back to back) and short menu/junk titles.
   # Junk titles are dropped by the >=60s floor before clustering, since a disc
   # can have more junk titles than episodes and would otherwise win the vote.
-  candidate_idx=()
-  buckets=()
+  # Clustering is relative (within 15% of a reference runtime) rather than
+  # fixed-width buckets, so an episode that straddles a bucket edge (e.g. 24:37
+  # alongside 25:30s) isn't dropped.
+  candidate_durs=()
+  candidate_nums=()
   for idx in "${!title_nums[@]}"; do
     if ((title_durs[idx] >= 60)); then
-      candidate_idx+=("$idx")
-      buckets+=($((title_durs[idx] / 300)))
+      candidate_durs+=("${title_durs[idx]}")
+      candidate_nums+=("${title_nums[idx]}")
     fi
   done
 
-  best_bucket=""
+  best_dur=0
   best_count=0
-  for b in "${buckets[@]}"; do
+  for d in ${candidate_durs[@]+"${candidate_durs[@]}"}; do
     count=0
-    for b2 in "${buckets[@]}"; do
-      [[ "$b2" == "$b" ]] && ((count++))
+    for d2 in "${candidate_durs[@]}"; do
+      diff=$((d2 - d)); ((diff < 0)) && diff=$((-diff))
+      ((diff * 100 <= d * 15)) && ((count++))
     done
     if ((count > best_count)); then
       best_count=$count
-      best_bucket=$b
+      best_dur=$d
     fi
   done
 
   episode_titles=()
-  for i in "${!candidate_idx[@]}"; do
-    if [[ "${buckets[$i]}" == "$best_bucket" ]]; then
-      episode_titles+=("${title_nums[${candidate_idx[$i]}]}")
+  for i in ${candidate_durs[@]+"${!candidate_durs[@]}"}; do
+    diff=$((candidate_durs[i] - best_dur)); ((diff < 0)) && diff=$((-diff))
+    if ((diff * 100 <= best_dur * 15)); then
+      episode_titles+=("${candidate_nums[$i]}")
     fi
   done
 
