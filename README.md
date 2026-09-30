@@ -34,6 +34,7 @@ rip-dvd [options]
 | `--split` | Rip every title on the disc to separate files instead of just the main feature. |
 | `--season=N` | Season number. Requires `--episode` and `--split`; changes output naming to `OUTPUT \| Season N \| Episode M.mp4`, incrementing per title. |
 | `--episode=N` | Starting episode number for the first title. Requires `--season` and `--split`. |
+| `--chapter=N` | With `--split`, rip only the Nth detected episode on the disc (1-based). Combined with `--season`/`--episode`, `--episode` is that single file's episode number. |
 | `--update` | Download and install the latest version from GitHub (`main` branch). |
 | `--version`, `-v` | Show the installed version. |
 | `--help`, `-h` | Show usage help. |
@@ -53,6 +54,22 @@ King of the Hill | Season 3 | Episode 5.mp4
 King of the Hill | Season 3 | Episode 6.mp4
 King of the Hill | Season 3 | Episode 7.mp4
 King of the Hill | Season 3 | Episode 8.mp4
+```
+
+### Ripping a single episode
+
+If one episode fails mid-batch (e.g. a scratched or copy-protected title),
+the rest of the disc still rips and `rip-dvd` prints the flags to retry just
+the failed ones. To rip only the 7th episode on the disc as episode 13:
+
+```
+rip-dvd --output="That 70s Show" --season=3 --episode=13 --split --chapter=7
+```
+
+Produces:
+
+```
+That 70s Show | Season 3 | Episode 13.mp4
 ```
 
 ## Update

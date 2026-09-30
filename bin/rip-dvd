@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
-VERSION="1.0.3"
+VERSION="1.1.0"
 
 print_help() {
   cat <<'EOF'
@@ -18,6 +18,8 @@ Options:
   --season=N      Season number. Requires --episode and --split; changes output naming to
                   "OUTPUT | Season N | Episode M.mp4", incrementing per title.
   --episode=N     Starting episode number for the first title. Requires --season and --split.
+  --chapter=N     With --split, rip only the Nth detected episode on the disc (1-based). Combined
+                  with --season/--episode, --episode is that single file's episode number.
   --update        Download and install the latest version from GitHub (main branch).
   --version, -v   Show the installed version.
   --help, -h      Show this help message.
@@ -74,6 +76,7 @@ title=""
 split=false
 season=""
 episode=""
+chapter=""
 
 for arg in "$@"; do
   case "$arg" in
@@ -95,9 +98,10 @@ for arg in "$@"; do
     --split) split=true ;;
     --season=*) season="${arg#--season=}" ;;
     --episode=*) episode="${arg#--episode=}" ;;
+    --chapter=*) chapter="${arg#--chapter=}" ;;
     *)
       echo "rip-dvd: unknown argument: $arg" >&2
-      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--season=N] [--episode=N] [--update] [--version] [--help]" >&2
+      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--season=N] [--episode=N] [--chapter=N] [--update] [--version] [--help]" >&2
       exit 1
       ;;
   esac
@@ -110,6 +114,17 @@ if [[ -n "$season" || -n "$episode" ]]; then
   fi
   if [[ -z "$season" || -z "$episode" ]]; then
     echo "rip-dvd: --season and --episode must be used together" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$chapter" ]]; then
+  if ! $split; then
+    echo "rip-dvd: --chapter requires --split" >&2
+    exit 1
+  fi
+  if ! [[ "$chapter" =~ ^[1-9][0-9]*$ ]]; then
+    echo "rip-dvd: --chapter must be a positive integer" >&2
     exit 1
   fi
 fi
@@ -202,24 +217,59 @@ if $split; then
 
   echo "rip-dvd: detected $episode_count episode title(s): ${episode_titles[*]} (of ${#title_nums[@]} total titles on disc)"
 
-  n=0
-  for t in "${episode_titles[@]}"; do
-    ((n++))
+  # --chapter picks a single episode by its position on the disc, e.g. to
+  # retry one that failed mid-batch without re-ripping the rest.
+  first=1
+  last=$episode_count
+  if [[ -n "$chapter" ]]; then
+    if ((chapter > episode_count)); then
+      echo "rip-dvd: --chapter=$chapter but only $episode_count episode title(s) detected" >&2
+      exit 1
+    fi
+    first=$chapter
+    last=$chapter
+  fi
+
+  # A single unreadable title (scratches, region-protection traps) makes
+  # HandBrakeCLI exit non-zero; under set -e that used to silently abort the
+  # rest of the batch, so failures are collected and reported instead.
+  failed=()
+  for ((n = first; n <= last; n++)); do
+    t="${episode_titles[$((n - 1))]}"
     if [[ -n "$season" ]]; then
-      episode_num=$((episode + n - 1))
+      if [[ -n "$chapter" ]]; then
+        episode_num=$episode
+      else
+        episode_num=$((episode + n - 1))
+      fi
       split_output="$HOME/Downloads/${safe_name} | Season ${season} | Episode ${episode_num}.mp4"
     else
       split_output="$HOME/Downloads/${safe_name} (Title ${t}).mp4"
     fi
     echo "rip-dvd: ripping title $t ($n of $episode_count) -> $split_output"
-    HandBrakeCLI -i "$disk" -o "$split_output" \
+    if ! HandBrakeCLI -i "$disk" -o "$split_output" \
       -t "$t" \
       --audio-lang-list "$lang" \
       --first-audio \
       --preset "Fast 480p30" \
       --format av_mp4 \
-      --encoder x264
+      --encoder x264; then
+      echo "rip-dvd: failed to rip title $t ($n of $episode_count)" >&2
+      if [[ -n "$season" ]]; then
+        failed+=("--chapter=$n --episode=$episode_num")
+      else
+        failed+=("--chapter=$n")
+      fi
+    fi
   done
+
+  if ((${#failed[@]} > 0)); then
+    echo "rip-dvd: ${#failed[@]} episode(s) failed to rip; retry each with --split plus:" >&2
+    for f in "${failed[@]}"; do
+      echo "rip-dvd:   $f" >&2
+    done
+    exit 1
+  fi
   exit 0
 fi
 
