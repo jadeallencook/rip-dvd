@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
-VERSION="1.1.0"
+VERSION="1.1.1"
 
 print_help() {
   cat <<'EOF'
@@ -150,7 +150,20 @@ fi
 
 if $split; then
   echo "rip-dvd: scanning disc for episode titles..." >&2
-  scan_output=$(HandBrakeCLI -i "$disk" --scan -t 0 2>&1)
+  # Only the first scan pass (title list + durations) is needed. The second
+  # pass decodes preview frames from every title, and on scratched or
+  # copy-protected discs it can block on a bad sector for an hour or more, so
+  # the scan is stopped as soon as preview decoding starts.
+  scan_log=$(mktemp)
+  HandBrakeCLI -i "$disk" --scan -t 0 >"$scan_log" 2>&1 &
+  scan_pid=$!
+  while kill -0 "$scan_pid" 2>/dev/null && ! grep -aq 'scan: decoding previews' "$scan_log"; do
+    sleep 1
+  done
+  kill "$scan_pid" 2>/dev/null || true
+  wait "$scan_pid" 2>/dev/null || true
+  scan_output=$(cat "$scan_log")
+  rm -f "$scan_log"
 
   title_nums=()
   title_durs=()
