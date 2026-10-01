@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
-VERSION="1.1.1"
+VERSION="1.2.0"
 
 print_help() {
   cat <<'EOF'
@@ -13,11 +13,14 @@ Usage: rip-dvd [options]
 Options:
   --output=NAME   Base name for the output file (default: current timestamp).
   --lang=CODE     Audio language to select, e.g. eng, fre (default: eng).
-  --title=N       Rip a specific title number instead of the main feature.
+  --title=N[:C]   Rip a specific title number instead of the main feature. Optionally limit it
+                  to HandBrake chapter C or range A-B, e.g. --title=16:1. Works with --season and
+                  --episode to name a single episode; can't be combined with --split.
   --split         Rip every title on the disc to separate files instead of just the main feature.
-  --season=N      Season number. Requires --episode and --split; changes output naming to
-                  "OUTPUT | Season N | Episode M.mp4", incrementing per title.
-  --episode=N     Starting episode number for the first title. Requires --season and --split.
+  --season=N      Season number. Requires --episode and --split or --title; changes output naming
+                  to "OUTPUT | Season N | Episode M.mp4", incrementing per title.
+  --episode=N     Starting episode number for the first title. Requires --season and --split or
+                  --title.
   --chapter=N     With --split, rip only the Nth detected episode on the disc (1-based). Combined
                   with --season/--episode, --episode is that single file's episode number.
   --update        Download and install the latest version from GitHub (main branch).
@@ -55,6 +58,16 @@ update_self() {
   chmod +x "$tmp"
   mv "$tmp" "$self_path"
   echo "rip-dvd: updated to v$remote_version"
+}
+
+# Seconds -> M:SS or H:MM:SS.
+fmt_dur() {
+  local s=$1
+  if ((s >= 3600)); then
+    printf '%d:%02d:%02d' $((s / 3600)) $((s / 60 % 60)) $((s % 60))
+  else
+    printf '%d:%02d' $((s / 60)) $((s % 60))
+  fi
 }
 
 check_dependencies() {
@@ -101,15 +114,29 @@ for arg in "$@"; do
     --chapter=*) chapter="${arg#--chapter=}" ;;
     *)
       echo "rip-dvd: unknown argument: $arg" >&2
-      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N] [--split] [--season=N] [--episode=N] [--chapter=N] [--update] [--version] [--help]" >&2
+      echo "Usage: rip-dvd [--output=name] [--lang=eng] [--title=N[:C]] [--split] [--season=N] [--episode=N] [--chapter=N] [--update] [--version] [--help]" >&2
       exit 1
       ;;
   esac
 done
 
+title_chapters=""
+if [[ -n "$title" ]]; then
+  if $split; then
+    echo "rip-dvd: --title can't be combined with --split" >&2
+    exit 1
+  fi
+  if ! [[ "$title" =~ ^([1-9][0-9]*)(:([1-9][0-9]*(-[1-9][0-9]*)?))?$ ]]; then
+    echo "rip-dvd: --title must look like N, N:C or N:A-B" >&2
+    exit 1
+  fi
+  title="${BASH_REMATCH[1]}"
+  title_chapters="${BASH_REMATCH[3]}"
+fi
+
 if [[ -n "$season" || -n "$episode" ]]; then
-  if ! $split; then
-    echo "rip-dvd: --season and --episode require --split" >&2
+  if ! $split && [[ -z "$title" ]]; then
+    echo "rip-dvd: --season and --episode require --split or --title" >&2
     exit 1
   fi
   if [[ -z "$season" || -z "$episode" ]]; then
@@ -165,17 +192,26 @@ if $split; then
   scan_output=$(cat "$scan_log")
   rm -f "$scan_log"
 
+  # title_chaps[i] holds title i's chapter lengths in seconds, space-separated;
+  # it's only used to describe skipped titles so they can be ripped by hand.
   title_nums=()
   title_durs=()
+  title_chaps=()
   current_title=""
+  current_idx=""
   while IFS= read -r line; do
     if [[ $line =~ scan:\ scanning\ title\ ([0-9]+) ]]; then
       current_title="${BASH_REMATCH[1]}"
+      current_idx=""
     elif [[ -n "$current_title" && $line =~ scan:\ duration\ is\ ([0-9]+):([0-9]+):([0-9]+) ]]; then
       h="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; s="${BASH_REMATCH[3]}"
+      current_idx=${#title_nums[@]}
       title_nums+=("$current_title")
       title_durs+=($((10#$h * 3600 + 10#$m * 60 + 10#$s)))
+      title_chaps+=("")
       current_title=""
+    elif [[ -n "$current_idx" && $line =~ scan:\ chap\ [0-9]+,\ ([0-9]+)\ ms ]]; then
+      title_chaps[current_idx]="${title_chaps[current_idx]} $((BASH_REMATCH[1] / 1000))"
     fi
   done <<< "$scan_output"
 
@@ -228,7 +264,7 @@ if $split; then
     exit 1
   fi
 
-  echo "rip-dvd: detected $episode_count episode title(s): ${episode_titles[*]} (of ${#title_nums[@]} total titles on disc)"
+  echo "rip-dvd: detected $episode_count episode title(s): ${episode_titles[*]} (of ${#title_nums[@]} total titles on disc; skipped titles are listed at the end)"
 
   # --chapter picks a single episode by its position on the disc, e.g. to
   # retry one that failed mid-batch without re-ripping the rest.
@@ -276,6 +312,37 @@ if $split; then
     fi
   done
 
+  # Episodes that don't match the common runtime (a short, or one glued to a
+  # bonus clip in the same title) are skipped above, so list everything that
+  # wasn't ripped; any of them can be ripped with --title=N[:C].
+  longest=0
+  for d in "${title_durs[@]}"; do ((d > longest)) && longest=$d; done
+  skipped_header=false
+  for idx in "${!title_nums[@]}"; do
+    t="${title_nums[idx]}"
+    d="${title_durs[idx]}"
+    ((d < 10)) && continue
+    case " ${episode_titles[*]} " in *" $t "*) continue ;; esac
+    if ! $skipped_header; then
+      echo "rip-dvd: titles not ripped (rip one with --title=N, or --title=N:C for only chapter(s) C):"
+      skipped_header=true
+    fi
+    chaps=()
+    for c in ${title_chaps[idx]}; do
+      ((c >= 2)) && chaps+=("$(fmt_dur "$c")")
+    done
+    note=""
+    ((d == longest && d >= 2 * best_dur)) && note=" (likely Play All)"
+    if ((${#chaps[@]} > 6)); then
+      chap_desc="${#chaps[@]} chapters"
+    elif ((${#chaps[@]} > 0)); then
+      chap_desc="chapters: $(IFS=,; echo "${chaps[*]}" | sed 's/,/, /g')"
+    else
+      chap_desc="no chapter info"
+    fi
+    echo "rip-dvd:   title $t  $(fmt_dur "$d")  $chap_desc$note"
+  done
+
   if ((${#failed[@]} > 0)); then
     echo "rip-dvd: ${#failed[@]} episode(s) failed to rip; retry each with --split plus:" >&2
     for f in "${failed[@]}"; do
@@ -286,9 +353,16 @@ if $split; then
   exit 0
 fi
 
-output=~/Downloads/${safe_name}.mp4
+if [[ -n "$season" ]]; then
+  output="$HOME/Downloads/${safe_name} | Season ${season} | Episode ${episode}.mp4"
+else
+  output=~/Downloads/${safe_name}.mp4
+fi
 if [[ -n "$title" ]]; then
   title_flag=(-t "$title")
+  if [[ -n "$title_chapters" ]]; then
+    title_flag+=(-c "$title_chapters")
+  fi
 else
   title_flag=(--main-feature)
 fi

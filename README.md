@@ -30,10 +30,10 @@ rip-dvd [options]
 | --- | --- |
 | `--output=NAME` | Base name for the output file (default: current timestamp). |
 | `--lang=CODE` | Audio language to select, e.g. `eng`, `fre` (default: `eng`). |
-| `--title=N` | Rip a specific title number instead of the main feature. |
+| `--title=N[:C]` | Rip a specific title number instead of the main feature. Optionally limit it to HandBrake chapter `C` or range `A-B`, e.g. `--title=16:1`. Works with `--season` and `--episode` to name a single episode; can't be combined with `--split`. |
 | `--split` | Rip every title on the disc to separate files instead of just the main feature. |
-| `--season=N` | Season number. Requires `--episode` and `--split`; changes output naming to `OUTPUT \| Season N \| Episode M.mp4`, incrementing per title. |
-| `--episode=N` | Starting episode number for the first title. Requires `--season` and `--split`. |
+| `--season=N` | Season number. Requires `--episode` and `--split` or `--title`; changes output naming to `OUTPUT \| Season N \| Episode M.mp4`, incrementing per title. |
+| `--episode=N` | Starting episode number for the first title. Requires `--season` and `--split` or `--title`. |
 | `--chapter=N` | With `--split`, rip only the Nth detected episode on the disc (1-based). Combined with `--season`/`--episode`, `--episode` is that single file's episode number. |
 | `--update` | Download and install the latest version from GitHub (`main` branch). |
 | `--version`, `-v` | Show the installed version. |
@@ -70,6 +70,27 @@ Produces:
 
 ```
 That 70s Show | Season 3 | Episode 13.mp4
+```
+
+### Episodes `--split` doesn't detect
+
+`--split` picks episodes by finding the titles that share a common runtime,
+so an unusually short episode, or one authored into the same title as a bonus
+clip, gets skipped. After ripping, it lists every title it skipped with its
+length and chapters, e.g.:
+
+```
+rip-dvd: titles not ripped (rip one with --title=N, or --title=N:C for only chapter(s) C):
+rip-dvd:   title 1  3:35  chapters: 3:35
+rip-dvd:   title 16  17:20  chapters: 11:03, 6:16
+rip-dvd:   title 17  2:55:43  17 chapters (likely Play All)
+```
+
+Rip a missed episode by title, optionally limited to its chapters:
+
+```
+rip-dvd --output="SpongeBob SquarePants" --season=1 --episode=1 --title=1
+rip-dvd --output="SpongeBob SquarePants" --season=1 --episode=16 --title=16:1
 ```
 
 ## Update
