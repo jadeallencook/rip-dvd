@@ -45,6 +45,10 @@ There's no test suite; this is validated against a real optical drive:
 The `--split` episode-detection logic in `bin/rip-dvd` (duration-bucket
 clustering to find the real episode titles among Play-All and junk/menu
 titles) is a heuristic, not a guarantee — it has already needed one bug fix
-(junk titles outnumbering episodes and winning the cluster vote). Treat
+(junk titles outnumbering episodes and winning the cluster vote). It also
+takes chapter 1 of a too-long title when that chapter is episode length and
+the title's chapters appear back to back in the Play All (episode + bonus clip
+authored as one title). Saved scans of several discs make good regression
+inputs: pipe one into the extracted detection block. Treat
 changes here carefully and verify against a real scan before considering the
 fix done.

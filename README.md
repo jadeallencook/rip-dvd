@@ -74,16 +74,17 @@ That 70s Show | Season 3 | Episode 13.mp4
 
 ### Episodes `--split` doesn't detect
 
-`--split` picks episodes by finding the titles that share a common runtime,
-so an unusually short episode, or one authored into the same title as a bonus
-clip, gets skipped. After ripping, it lists every title it skipped with its
-length and chapters, e.g.:
+`--split` picks episodes by finding the titles that share a common runtime.
+If a disc authors an episode and a bonus clip as one title, it rips just the
+episode chapter, as long as that title is part of the disc's Play All. An
+unusually short episode is still skipped. After ripping, it lists every title
+it skipped with its length and chapters, e.g.:
 
 ```
 rip-dvd: titles not ripped (rip one with --title=N, or --title=N:C for only chapter(s) C):
 rip-dvd:   title 1  3:35  chapters: 3:35
-rip-dvd:   title 16  17:20  chapters: 11:03, 6:16
 rip-dvd:   title 17  2:55:43  17 chapters (likely Play All)
+rip-dvd:   title 18  6:17  chapters: 6:16
 ```
 
 Rip a missed episode by title, optionally limited to its chapters:

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/jadeallencook/rip-dvd/main/bin/rip-dvd"
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 print_help() {
   cat <<'EOF'
@@ -192,8 +192,9 @@ if $split; then
   scan_output=$(cat "$scan_log")
   rm -f "$scan_log"
 
-  # title_chaps[i] holds title i's chapter lengths in seconds, space-separated;
-  # it's only used to describe skipped titles so they can be ripped by hand.
+  # title_chaps[i] holds title i's chapter lengths in seconds, space-separated,
+  # used to find episodes authored together with a bonus clip and to describe
+  # skipped titles so they can be ripped by hand.
   title_nums=()
   title_durs=()
   title_chaps=()
@@ -250,11 +251,73 @@ if $split; then
     fi
   done
 
+  # Some discs author an episode and a bonus clip as one title (episode in
+  # chapter 1), which is too long to cluster. Such a title is still taken, as
+  # chapter 1 only, when that chapter is episode length and the title's
+  # chapters appear back to back in the Play All, so an extra that merely
+  # starts with an episode-length chapter isn't picked up. The Play All is the
+  # longest title, and only counts as one if it's at least two episodes long.
+  longest=0
+  playall_idx=""
+  for idx in "${!title_nums[@]}"; do
+    if ((title_durs[idx] > longest)); then
+      longest=${title_durs[idx]}
+      playall_idx=$idx
+    fi
+  done
+  playall_chaps=()
+  if ((longest >= 2 * best_dur)); then
+    for c in ${title_chaps[playall_idx]}; do
+      ((c >= 2)) && playall_chaps+=("$c")
+    done
+  else
+    playall_idx=""
+  fi
+
+  # Succeeds if the given chapter lengths (ignoring <2s stubs) appear as a
+  # consecutive run of Play All chapters, allowing 2s of rounding per chapter.
+  in_playall() {
+    local tc=() c i j d n m
+    for c in $1; do
+      ((c >= 2)) && tc+=("$c")
+    done
+    n=${#tc[@]}
+    m=${#playall_chaps[@]}
+    ((n > 0 && m > 0)) || return 1
+    for ((i = 0; i + n <= m; i++)); do
+      for ((j = 0; j < n; j++)); do
+        d=$((playall_chaps[i + j] - tc[j])); ((d < 0)) && d=$((-d))
+        ((d > 2)) && break
+      done
+      ((j == n)) && return 0
+    done
+    return 1
+  }
+
+  # episode_chaps[i] is the HandBrake chapter range for episode_titles[i], or
+  # empty for the whole title.
   episode_titles=()
-  for i in ${candidate_durs[@]+"${!candidate_durs[@]}"}; do
-    diff=$((candidate_durs[i] - best_dur)); ((diff < 0)) && diff=$((-diff))
+  episode_chaps=()
+  for idx in "${!title_nums[@]}"; do
+    d="${title_durs[idx]}"
+    ((d >= 60)) || continue
+    diff=$((d - best_dur)); ((diff < 0)) && diff=$((-diff))
     if ((diff * 100 <= best_dur * 15)); then
-      episode_titles+=("${candidate_nums[$i]}")
+      episode_titles+=("${title_nums[idx]}")
+      episode_chaps+=("")
+      continue
+    fi
+    [[ -n "$playall_idx" && "$idx" != "$playall_idx" ]] || continue
+    first_chap=""
+    for c in ${title_chaps[idx]}; do
+      first_chap=$c
+      break
+    done
+    [[ -n "$first_chap" ]] || continue
+    diff=$((first_chap - best_dur)); ((diff < 0)) && diff=$((-diff))
+    if ((diff * 100 <= best_dur * 15)) && in_playall "${title_chaps[idx]}"; then
+      episode_titles+=("${title_nums[idx]}")
+      episode_chaps+=("1")
     fi
   done
 
@@ -264,7 +327,11 @@ if $split; then
     exit 1
   fi
 
-  echo "rip-dvd: detected $episode_count episode title(s): ${episode_titles[*]} (of ${#title_nums[@]} total titles on disc; skipped titles are listed at the end)"
+  episode_desc=""
+  for i in "${!episode_titles[@]}"; do
+    episode_desc="$episode_desc ${episode_titles[i]}${episode_chaps[i]:+:${episode_chaps[i]}}"
+  done
+  echo "rip-dvd: detected $episode_count episode title(s):$episode_desc (of ${#title_nums[@]} total titles on disc; skipped titles are listed at the end)"
 
   # --chapter picks a single episode by its position on the disc, e.g. to
   # retry one that failed mid-batch without re-ripping the rest.
@@ -285,6 +352,9 @@ if $split; then
   failed=()
   for ((n = first; n <= last; n++)); do
     t="${episode_titles[$((n - 1))]}"
+    tc="${episode_chaps[$((n - 1))]}"
+    title_args=(-t "$t")
+    [[ -n "$tc" ]] && title_args+=(-c "$tc")
     if [[ -n "$season" ]]; then
       if [[ -n "$chapter" ]]; then
         episode_num=$episode
@@ -295,9 +365,9 @@ if $split; then
     else
       split_output="$HOME/Downloads/${safe_name} (Title ${t}).mp4"
     fi
-    echo "rip-dvd: ripping title $t ($n of $episode_count) -> $split_output"
+    echo "rip-dvd: ripping title $t${tc:+ chapter $tc} ($n of $episode_count) -> $split_output"
     if ! HandBrakeCLI -i "$disk" -o "$split_output" \
-      -t "$t" \
+      "${title_args[@]}" \
       --audio-lang-list "$lang" \
       --first-audio \
       --preset "Fast 480p30" \
@@ -315,8 +385,6 @@ if $split; then
   # Episodes that don't match the common runtime (a short, or one glued to a
   # bonus clip in the same title) are skipped above, so list everything that
   # wasn't ripped; any of them can be ripped with --title=N[:C].
-  longest=0
-  for d in "${title_durs[@]}"; do ((d > longest)) && longest=$d; done
   skipped_header=false
   for idx in "${!title_nums[@]}"; do
     t="${title_nums[idx]}"
@@ -332,7 +400,7 @@ if $split; then
       ((c >= 2)) && chaps+=("$(fmt_dur "$c")")
     done
     note=""
-    ((d == longest && d >= 2 * best_dur)) && note=" (likely Play All)"
+    [[ "$idx" == "$playall_idx" ]] && note=" (likely Play All)"
     if ((${#chaps[@]} > 6)); then
       chap_desc="${#chaps[@]} chapters"
     elif ((${#chaps[@]} > 0)); then
